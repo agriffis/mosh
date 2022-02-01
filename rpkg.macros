@@ -3,21 +3,21 @@
 # backward compat since cached function went away
 # https://pagure.io/rpkg-util/c/bb62554c62fd52224709e861c2353a5c15b50220?branch=master
 function cached {
-    echo -n "${CACHE[$1]}"
+    declare v=${OUTPUT[$1]}
+    [[ -n $v ]] && echo -n "$v"
 }
 
 eval "function _git_version() $(type git_version | sed 1,2d)"
 
 function git_version {
+    cached git_version && return
     declare v="$(_git_version "$@")"
-
     if [[ $v =~ \.git\.[0-9]+\.[0-9a-f]+$ ]]; then
         # The git revision tacked on the end is from our branch. Replace it with
         # the last git revision from master, so that builds correspond with
         # upstream commits.
         v=${v%.*}.$(git rev-parse --short origin/master)
     fi
-
     output "$v"
 }
 
@@ -26,9 +26,13 @@ function git_revision {
 }
 
 function git_changelog_date {
+    cached git_changelog_date && return
     output "$(date +'%a %b %d %Y')"
 }
 
 function git_changelog_version {
-    output "$(cached git_version)-$(cached git_revision)"
+    cached git_changelog_version && return
+    git_version &>/dev/null # cache
+    git_revision &>/dev/null # cache
+    output "$(git_version)-$(git_revision)"
 }
