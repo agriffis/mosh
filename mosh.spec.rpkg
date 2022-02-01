@@ -5,7 +5,7 @@ Summary:        Mobile shell that supports roaming and intelligent local echo
 
 License:        GPLv3+
 Url:            https://mosh.org/
-Source0:        {{{git_pack}}}
+Source0:        {{{git_repo_pack}}}
 
 BuildRequires:  autoconf
 BuildRequires:  automake
@@ -32,7 +32,7 @@ Mosh is a remote terminal application that supports:
 
 
 %prep
-{{{git_setup_macro}}}
+{{{git_setup_macro path="$GIT_ROOT"}}}
 
 
 %build
