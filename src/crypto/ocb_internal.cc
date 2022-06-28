@@ -85,6 +85,8 @@
 /* ----------------------------------------------------------------------- */
 
 #include "ae.h"
+#include "crypto.h"
+#include "fatal_assert.h"
 #include <stdlib.h>
 #include <string.h>
 #if defined(HAVE_STRINGS_H)
@@ -96,6 +98,8 @@
 #include <sys/types.h>
 #include <sys/endian.h>
 #endif
+
+#include <new>
 
 /* Define standard sized integers                                          */
 #if defined(_MSC_VER) && (_MSC_VER < 1600)
@@ -351,29 +355,119 @@
 #endif
 
 /* ----------------------------------------------------------------------- */
-/* AES - Code uses OpenSSL API. Other implementations get mapped to it.    */
+/* AES                                                                     */
 /* ----------------------------------------------------------------------- */
 
 /*---------------*/
 #if USE_OPENSSL_AES
 /*---------------*/
 
-#include <openssl/aes.h>                            /* http://openssl.org/ */
+#include <openssl/evp.h>                            /* http://openssl.org/ */
+
+namespace ocb_aes {
+
+typedef EVP_CIPHER_CTX KEY;
+
+enum { BLOCK_SIZE = 16 };
+
+static KEY *KEY_new() {
+	KEY *key = EVP_CIPHER_CTX_new();
+	if (key == NULL) {
+		throw std::bad_alloc();
+	}
+	return key;
+}
+
+static void KEY_delete(KEY *key) { EVP_CIPHER_CTX_free(key); }
+
+static void set_encrypt_key(const unsigned char *user_key, int bits, KEY *key) {
+	// Do not copy and paste this code! It is far too low-level to be
+	// general-purpose. If you're looking for an example of using AEAD
+	// through OpenSSL's EVP_CIPHER API, have a look at ocb_openssl.cc
+	// instead.
+	//
+	// This function and the others in this section replicate the behavior of
+	// OpenSSL's deprecated AES_* primitives. Those primitives implemented AES
+	// without any block cipher mode--that is, in ECB mode. Normally, using ECB
+	// mode anywhere would be questionable, but it's safe here because it's
+	// being used to implement a higher-level cryptographic mode (OCB mode),
+	// which is in turn used by Mosh.
+
+	fatal_assert(bits == 128);
+	if (EVP_EncryptInit_ex(key, EVP_aes_128_ecb(), /*impl=*/NULL, user_key, /*iv=*/NULL) != 1 ||
+			EVP_CIPHER_CTX_set_padding(key, false) != 1) {
+		throw Crypto::CryptoException("Could not initialize AES encryption context.");
+	}
+}
+
+static void set_decrypt_key(const unsigned char *user_key, int bits, KEY *key) {
+	// Do not copy and paste this code! See notes in set_encrypt_key.
+	fatal_assert(bits == 128);
+	if (EVP_DecryptInit_ex(key, EVP_aes_128_ecb(), /*impl=*/NULL, user_key, /*iv=*/NULL) != 1 ||
+			EVP_CIPHER_CTX_set_padding(key, false) != 1) {
+		throw Crypto::CryptoException("Could not initialize AES decryption context.");
+	}
+}
+
+static void encrypt(const unsigned char *in, unsigned char *out, KEY *key) {
+	// Even though the functions in this section use ECB mode (which is
+	// stateless), OpenSSL still requires calls to EncryptInit and
+	// EncryptFinal. Since ECB mode has no IV and they key is unchanged,
+	// every parameter to this function can be NULL (which OpenSSL
+	// interprets as "don't change this").
+	if (EVP_EncryptInit_ex(key, /*type=*/NULL, /*impl=*/NULL, /*key=*/NULL, /*iv=*/NULL) != 1) {
+		throw Crypto::CryptoException("Could not start AES encryption operation.");
+	}
+
+	int len;
+	if (EVP_EncryptUpdate(key, out, &len, in, BLOCK_SIZE) != 1) {
+		throw Crypto::CryptoException("Could not AES-encrypt block.");
+	}
+
+	int total_len = len;
+	if (EVP_EncryptFinal_ex(key, out + total_len, &len) != 1) {
+		throw Crypto::CryptoException("Could not finish AES encryption operation.");
+	}
+	total_len += len;
+	fatal_assert(total_len == BLOCK_SIZE);
+}
+
+static void decrypt(const unsigned char *in, unsigned char *out, KEY *key) {
+	// See notes in encrypt about EncryptInit and EncryptFinal; the same
+	// notes apply to DecryptInit and DecryptFinal here.
+	if (EVP_DecryptInit_ex(key, /*type=*/NULL, /*impl=*/NULL, /*key=*/NULL, /*iv=*/NULL) != 1) {
+		throw Crypto::CryptoException("Could not start AES decryption operation.");
+	}
+
+	int len;
+	if (EVP_DecryptUpdate(key, out, &len, in, BLOCK_SIZE) != 1) {
+		throw Crypto::CryptoException("Could not AES-decrypt block.");
+	}
+
+	int total_len = len;
+	if (EVP_DecryptFinal_ex(key, out + total_len, &len) != 1) {
+		throw Crypto::CryptoException("Could not finish AES decryption operation.");
+	}
+	total_len += len;
+	fatal_assert(total_len == BLOCK_SIZE);
+}
 
 /* How to ECB encrypt an array of blocks, in place                         */
-static inline void AES_ecb_encrypt_blks(block *blks, unsigned nblks, AES_KEY *key) {
+static void ecb_encrypt_blks(block *blks, unsigned nblks, KEY *key) {
 	while (nblks) {
 		--nblks;
-		AES_encrypt((unsigned char *)(blks+nblks), (unsigned char *)(blks+nblks), key);
+		encrypt(reinterpret_cast<unsigned char *>(blks+nblks), reinterpret_cast<unsigned char *>(blks+nblks), key);
 	}
 }
 
-static inline void AES_ecb_decrypt_blks(block *blks, unsigned nblks, AES_KEY *key) {
+static void ecb_decrypt_blks(block *blks, unsigned nblks, KEY *key) {
 	while (nblks) {
 		--nblks;
-		AES_decrypt((unsigned char *)(blks+nblks), (unsigned char *)(blks+nblks), key);
+		decrypt(reinterpret_cast<unsigned char *>(blks+nblks), reinterpret_cast<unsigned char *>(blks+nblks), key);
 	}
 }
+
+}  // namespace ocb_aes
 
 #define BPI 4  /* Number of blocks in buffer per ECB call */
 
@@ -381,20 +475,20 @@ static inline void AES_ecb_decrypt_blks(block *blks, unsigned nblks, AES_KEY *ke
 #elif USE_APPLE_COMMON_CRYPTO_AES
 /*-------------------*/
 
-#include <fatal_assert.h>
 #include <CommonCrypto/CommonCryptor.h>
+
+namespace ocb_aes {
 
 typedef struct {
 	CCCryptorRef ref;
 	uint8_t b[4096];
-} AES_KEY;
-#if (OCB_KEY_LEN == 0)
-#define ROUNDS(ctx) ((ctx)->rounds)
-#else
-#define ROUNDS(ctx) (6+OCB_KEY_LEN/4)
-#endif
+} KEY;
 
-static inline void AES_set_encrypt_key(unsigned char *handle, const int bits, AES_KEY *key)
+static KEY *KEY_new() { return new KEY; }
+
+static void KEY_delete(KEY *key) { delete key; }
+
+static void set_encrypt_key(const unsigned char *handle, const int bits, KEY *key)
 {
 	CCCryptorStatus rv = CCCryptorCreateFromData(
 		kCCEncrypt,
@@ -410,7 +504,7 @@ static inline void AES_set_encrypt_key(unsigned char *handle, const int bits, AE
 
 	fatal_assert(rv == kCCSuccess);
 }
-static inline void AES_set_decrypt_key(unsigned char *handle, const int bits, AES_KEY *key)
+static void set_decrypt_key(const unsigned char *handle, const int bits, KEY *key)
 {
 	CCCryptorStatus rv = CCCryptorCreateFromData(
 		kCCDecrypt,
@@ -426,7 +520,7 @@ static inline void AES_set_decrypt_key(unsigned char *handle, const int bits, AE
 
 	fatal_assert(rv == kCCSuccess);
 }
-static inline void AES_encrypt(unsigned char *src, unsigned char *dst, AES_KEY *key) {
+static void encrypt(unsigned char *src, unsigned char *dst, KEY *key) {
 	size_t dataOutMoved;
 	CCCryptorStatus rv = CCCryptorUpdate(
 		key->ref,
@@ -440,11 +534,11 @@ static inline void AES_encrypt(unsigned char *src, unsigned char *dst, AES_KEY *
 }
 #if 0
 /* unused */
-static inline void AES_decrypt(unsigned char *src, unsigned char *dst, AES_KEY *key) {
-	AES_encrypt(src, dst, key);
+static void decrypt(unsigned char *src, unsigned char *dst, KEY *key) {
+	encrypt(src, dst, key);
 }
 #endif
-static inline void AES_ecb_encrypt_blks(block *blks, unsigned nblks, AES_KEY *key) {
+static void ecb_encrypt_blks(block *blks, unsigned nblks, KEY *key) {
 	const size_t dataSize = kCCBlockSizeAES128 * nblks;
 	size_t dataOutMoved;
 	CCCryptorStatus rv = CCCryptorUpdate(
@@ -457,9 +551,11 @@ static inline void AES_ecb_encrypt_blks(block *blks, unsigned nblks, AES_KEY *ke
 	fatal_assert(rv == kCCSuccess);
 	fatal_assert(dataOutMoved == dataSize);
 }
-static inline void AES_ecb_decrypt_blks(block *blks, unsigned nblks, AES_KEY *key) {
-	AES_ecb_encrypt_blks(blks, nblks, key);
+static void ecb_decrypt_blks(block *blks, unsigned nblks, KEY *key) {
+	ecb_encrypt_blks(blks, nblks, key);
 }
+
+}  // namespace ocb_aes
 
 #define BPI 4  /* Number of blocks in buffer per ECB call */
 
@@ -469,36 +565,41 @@ static inline void AES_ecb_decrypt_blks(block *blks, unsigned nblks, AES_KEY *ke
 
 #include <nettle/aes.h>
 
-typedef struct aes_ctx AES_KEY;
-#if (OCB_KEY_LEN == 0)
-#define ROUNDS(ctx) ((ctx)->rounds)
-#else
-#define ROUNDS(ctx) (6+OCB_KEY_LEN/4)
-#endif
+namespace ocb_aes {
 
-static inline void AES_set_encrypt_key(unsigned char *handle, const int bits, AES_KEY *key)
+typedef struct aes128_ctx KEY;
+
+static KEY *KEY_new() { return new KEY; }
+
+static void KEY_delete(KEY *key) { delete key; }
+
+static void set_encrypt_key(const unsigned char *handle, const int bits, KEY *key)
 {
-	nettle_aes_set_encrypt_key(key, bits/8, (const uint8_t *)handle);
+	fatal_assert(bits == 128);
+	nettle_aes128_set_encrypt_key(key, (const uint8_t *)handle);
 }
-static inline void AES_set_decrypt_key(unsigned char *handle, const int bits, AES_KEY *key)
+static void set_decrypt_key(const unsigned char *handle, const int bits, KEY *key)
 {
-	nettle_aes_set_decrypt_key(key, bits/8, (const uint8_t *)handle);
+	fatal_assert(bits == 128);
+	nettle_aes128_set_decrypt_key(key, (const uint8_t *)handle);
 }
-static inline void AES_encrypt(unsigned char *src, unsigned char *dst, AES_KEY *key) {
-	nettle_aes_encrypt(key, AES_BLOCK_SIZE, dst, src);
+static void encrypt(unsigned char *src, unsigned char *dst, KEY *key) {
+	nettle_aes128_encrypt(key, AES_BLOCK_SIZE, dst, src);
 }
 #if 0
 /* unused */
-static inline void AES_decrypt(unsigned char *src, unsigned char *dst, AES_KEY *key) {
-	nettle_aes_decrypt(key, AES_BLOCK_SIZE, dst, src);
+static void decrypt(unsigned char *src, unsigned char *dst, KEY *key) {
+	nettle_aes128_decrypt(key, AES_BLOCK_SIZE, dst, src);
 }
 #endif
-static inline void AES_ecb_encrypt_blks(block *blks, unsigned nblks, AES_KEY *key) {
-	nettle_aes_encrypt(key, nblks * AES_BLOCK_SIZE, (unsigned char*)blks, (unsigned char*)blks);
+static void ecb_encrypt_blks(block *blks, unsigned nblks, KEY *key) {
+	nettle_aes128_encrypt(key, nblks * AES_BLOCK_SIZE, (unsigned char*)blks, (unsigned char*)blks);
 }
-static inline void AES_ecb_decrypt_blks(block *blks, unsigned nblks, AES_KEY *key) {
-	nettle_aes_decrypt(key, nblks * AES_BLOCK_SIZE, (unsigned char*)blks, (unsigned char*)blks);
+static void ecb_decrypt_blks(block *blks, unsigned nblks, KEY *key) {
+	nettle_aes128_decrypt(key, nblks * AES_BLOCK_SIZE, (unsigned char*)blks, (unsigned char*)blks);
 }
+
+}  // namespace ocb_aes
 
 #define BPI 4  /* Number of blocks in buffer per ECB call */
 
@@ -532,8 +633,8 @@ struct _ae_ctx {
 	uint64_t KtopStr[3];                   /* Register correct, each item  */
     uint32_t ad_blocks_processed;
     uint32_t blocks_processed;
-    AES_KEY decrypt_key;
-    AES_KEY encrypt_key;
+    ocb_aes::KEY *decrypt_key;
+    ocb_aes::KEY *encrypt_key;
     #if (OCB_TAG_LEN == 0)
     unsigned tag_len;
     #endif
@@ -575,6 +676,8 @@ static block getL(const ae_ctx *ctx, unsigned tz)
 
 int ae_clear (ae_ctx *ctx) /* Zero ae_ctx and undo initialization          */
 {
+	ocb_aes::KEY_delete(ctx->encrypt_key);
+	ocb_aes::KEY_delete(ctx->decrypt_key);
 	memset(ctx, 0, sizeof(ae_ctx));
 	return AE_SUCCESS;
 }
@@ -591,20 +694,23 @@ int ae_init(ae_ctx *ctx, const void *key, int key_len, int nonce_len, int tag_le
     if (nonce_len != 12)
     	return AE_NOT_SUPPORTED;
 
+    ctx->decrypt_key = ocb_aes::KEY_new();
+    ctx->encrypt_key = ocb_aes::KEY_new();
+
     /* Initialize encryption & decryption keys */
     #if (OCB_KEY_LEN > 0)
     key_len = OCB_KEY_LEN;
     #endif
-    AES_set_encrypt_key((unsigned char *)key, key_len*8, &ctx->encrypt_key);
-    AES_set_decrypt_key((unsigned char *)key, (int)(key_len*8), &ctx->decrypt_key);
+    ocb_aes::set_encrypt_key(reinterpret_cast<const unsigned char *>(key), key_len*8, ctx->encrypt_key);
+    ocb_aes::set_decrypt_key(reinterpret_cast<const unsigned char *>(key), static_cast<int>(key_len*8), ctx->decrypt_key);
 
     /* Zero things that need zeroing */
     ctx->cached_Top = ctx->ad_checksum = zero_block();
     ctx->ad_blocks_processed = 0;
 
     /* Compute key-dependent values */
-    AES_encrypt((unsigned char *)&ctx->cached_Top,
-                            (unsigned char *)&ctx->Lstar, &ctx->encrypt_key);
+    ocb_aes::encrypt(reinterpret_cast<unsigned char *>(&ctx->cached_Top),
+                            reinterpret_cast<unsigned char *>(&ctx->Lstar), ctx->encrypt_key);
     tmp_blk = swap_if_le(ctx->Lstar);
     tmp_blk = double_block(tmp_blk);
     ctx->Ldollar = swap_if_le(tmp_blk);
@@ -641,7 +747,7 @@ static block gen_offset_from_nonce(ae_ctx *ctx, const void *nonce)
 	tmp.u8[15] = tmp.u8[15] & 0xc0;        /* Zero low 6 bits of nonce */
 	if ( unequal_blocks(tmp.bl,ctx->cached_Top) )   { /* Cached?       */
 		ctx->cached_Top = tmp.bl;          /* Update cache, KtopStr    */
-		AES_encrypt(tmp.u8, (unsigned char *)&ctx->KtopStr, &ctx->encrypt_key);
+		ocb_aes::encrypt(tmp.u8, (unsigned char *)&ctx->KtopStr, ctx->encrypt_key);
 		if (little.endian) {               /* Make Register Correct    */
 			ctx->KtopStr[0] = bswap64(ctx->KtopStr[0]);
 			ctx->KtopStr[1] = bswap64(ctx->KtopStr[1]);
@@ -689,7 +795,7 @@ static void process_ad(ae_ctx *ctx, const void *ad, int ad_len, int final)
 				ad_offset = xor_block(oa[6], getL(ctx, tz));
 				ta[7] = xor_block(ad_offset, adp[7]);
 			#endif
-			AES_ecb_encrypt_blks(ta,BPI,&ctx->encrypt_key);
+			ocb_aes::ecb_encrypt_blks(ta, BPI, ctx->encrypt_key);
 			ad_checksum = xor_block(ad_checksum, ta[0]);
 			ad_checksum = xor_block(ad_checksum, ta[1]);
 			ad_checksum = xor_block(ad_checksum, ta[2]);
@@ -750,7 +856,7 @@ static void process_ad(ae_ctx *ctx, const void *ad, int ad_len, int final)
 				ta[k] = xor_block(ad_offset, tmp.bl);
 				++k;
 			}
-			AES_ecb_encrypt_blks(ta,k,&ctx->encrypt_key);
+			ocb_aes::ecb_encrypt_blks(ta, k, ctx->encrypt_key);
 			switch (k) {
 				#if (BPI == 8)
 				case 8: ad_checksum = xor_block(ad_checksum, ta[7]);
@@ -847,7 +953,7 @@ int ae_encrypt(ae_ctx     *  ctx,
 				ta[7] = xor_block(oa[7], ptp[7]);
 				checksum = xor_block(checksum, ptp[7]);
 			#endif
-			AES_ecb_encrypt_blks(ta,BPI,&ctx->encrypt_key);
+			ocb_aes::ecb_encrypt_blks(ta, BPI, ctx->encrypt_key);
 			ctp[0] = xor_block(ta[0], oa[0]);
 			ctp[1] = xor_block(ta[1], oa[1]);
 			ctp[2] = xor_block(ta[2], oa[2]);
@@ -919,7 +1025,7 @@ int ae_encrypt(ae_ctx     *  ctx,
 		}
         offset = xor_block(offset, ctx->Ldollar);      /* Part of tag gen */
         ta[k] = xor_block(offset, checksum);           /* Part of tag gen */
-		AES_ecb_encrypt_blks(ta,k+1,&ctx->encrypt_key);
+		ocb_aes::ecb_encrypt_blks(ta, k + 1, ctx->encrypt_key);
 		offset = xor_block(ta[k], ctx->ad_checksum);   /* Part of tag gen */
 		if (remaining) {
 			--k;
@@ -1060,7 +1166,7 @@ int ae_decrypt(ae_ctx     *ctx,
 				oa[7] = xor_block(oa[6], getL(ctx, ntz(block_num)));
 				ta[7] = xor_block(oa[7], ctp[7]);
 			#endif
-			AES_ecb_decrypt_blks(ta,BPI,&ctx->decrypt_key);
+			ocb_aes::ecb_decrypt_blks(ta,BPI,ctx->decrypt_key);
 			ptp[0] = xor_block(ta[0], oa[0]);
 			checksum = xor_block(checksum, ptp[0]);
 			ptp[1] = xor_block(ta[1], oa[1]);
@@ -1125,7 +1231,7 @@ int ae_decrypt(ae_ctx     *ctx,
 			if (remaining) {
 				block pad;
 				offset = xor_block(offset,ctx->Lstar);
-				AES_encrypt((unsigned char *)&offset, tmp.u8, &ctx->encrypt_key);
+				ocb_aes::encrypt(reinterpret_cast<unsigned char *>(&offset), tmp.u8, ctx->encrypt_key);
 				pad = tmp.bl;
 				memcpy(tmp.u8,ctp+k,remaining);
 				tmp.bl = xor_block(tmp.bl, pad);
@@ -1134,7 +1240,7 @@ int ae_decrypt(ae_ctx     *ctx,
 				checksum = xor_block(checksum, tmp.bl);
 			}
 		}
-		AES_ecb_decrypt_blks(ta,k,&ctx->decrypt_key);
+		ocb_aes::ecb_decrypt_blks(ta,k,ctx->decrypt_key);
 		switch (k) {
 			#if (BPI == 8)
 			case 7: ptp[6] = xor_block(ta[6], oa[6]);
@@ -1163,7 +1269,7 @@ int ae_decrypt(ae_ctx     *ctx,
 		/* Calculate expected tag */
         offset = xor_block(offset, ctx->Ldollar);
         tmp.bl = xor_block(offset, checksum);
-		AES_encrypt(tmp.u8, tmp.u8, &ctx->encrypt_key);
+		ocb_aes::encrypt(tmp.u8, tmp.u8, ctx->encrypt_key);
 		tmp.bl = xor_block(tmp.bl, ctx->ad_checksum); /* Full tag */
 
 		/* Compare with proposed tag, change ct_len if invalid */
