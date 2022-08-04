@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.61])
-AC_INIT([mosh], [1.3.2], [mosh-devel@mit.edu])
+AC_INIT([mosh], [1.4.0-rc1], [mosh-devel@mit.edu])
 AM_INIT_AUTOMAKE([foreign std-options -Wall -Werror -Wno-portability])
 m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 AC_CONFIG_SRCDIR([src/frontend/mosh-client.cc])
@@ -45,8 +45,10 @@ AC_ARG_ENABLE([compile-warnings],
      error)
        # remove -Wno-c++17-extensions once protocolbuffers/protobuf#9181 is
        # resolved
+       # remove -Wno-unused-parameter once
+       # protocolbuffers/protobuf#10357 is resolved       
        WARNING_CXXFLAGS="-Wall -Werror -Wno-c++17-extensions"
-       PICKY_CXXFLAGS="-Wextra -pedantic -Wno-long-long -Weffc++ -Wmissing-declarations"
+       PICKY_CXXFLAGS="-Wextra -pedantic -Wno-long-long -Weffc++ -Wmissing-declarations -Wno-unused-parameter"
        ;;
      distcheck)
        WARNING_CXXFLAGS="-Wall -Werror"
