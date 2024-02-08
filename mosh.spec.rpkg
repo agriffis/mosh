@@ -1,6 +1,6 @@
 Name:           {{{git_name name="mosh"}}}
 Version:        {{{git_version lead="$(git tag | sed -n 's/^mosh-//p' | sort --version-sort -r | head -n1)"}}}
-Release:        {{{git_revision 1}}}%{?dist}
+Release:        {{{git_revision}}}%{?dist}
 Summary:        Mobile shell that supports roaming and intelligent local echo
 
 License:        GPLv3+
@@ -9,19 +9,20 @@ Source0:        {{{git_repo_pack}}}
 
 BuildRequires:  autoconf
 BuildRequires:  automake
-BuildRequires:  gcc
-BuildRequires:  gcc-c++
+BuildRequires:  libutempter-devel
+BuildRequires:  ncurses-devel
+BuildRequires:  openssl-devel
+BuildRequires:  perl-diagnostics
 BuildRequires:  perl-generators
 BuildRequires:  protobuf-compiler
 BuildRequires:  protobuf-devel
-BuildRequires:  libutempter-devel
 BuildRequires:  zlib-devel
-BuildRequires:  ncurses-devel
-BuildRequires:  openssl-devel
-BuildRequires:  perl(diagnostics)
+BuildRequires:  gcc
+BuildRequires:  gcc-c++
+BuildRequires:  make
 Requires:       openssh-clients
 Requires:       openssl
-Requires:       perl(IO::Socket::INET6)
+Requires:       perl(IO::Socket::IP)
 
 %description
 Mosh is a remote terminal application that supports:
@@ -59,6 +60,58 @@ Mosh is a remote terminal application that supports:
 %changelog
 * {{{git_changelog_date}}} Aron Griffis <aron@scampersand.com> - {{{git_changelog_version}}}
 - Nightly build from git master
+
+* Thu Jan 25 2024 Fedora Release Engineering <releng@fedoraproject.org> - 1.4.0-5
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_40_Mass_Rebuild
+
+* Sun Jan 21 2024 Fedora Release Engineering <releng@fedoraproject.org> - 1.4.0-4
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_40_Mass_Rebuild
+
+* Thu Jul 20 2023 Fedora Release Engineering <releng@fedoraproject.org> - 1.4.0-3
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_39_Mass_Rebuild
+
+* Thu Jan 19 2023 Fedora Release Engineering <releng@fedoraproject.org> - 1.4.0-2
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_38_Mass_Rebuild
+
+* Wed Oct 26 2022 Alex Chernyakhovsky <achernya@mit.edu> - 1.4.0-1
+- Update to mosh 1.4.0
+
+* Thu Jul 21 2022 Fedora Release Engineering <releng@fedoraproject.org> - 1.3.2-15
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_37_Mass_Rebuild
+
+* Tue Apr 05 2022 Michal Josef Špaček <mspacek@redhat.com> - 1.3.2-14
+- Remove dependency to obsolete IO::Socket::INET6
+
+* Thu Jan 20 2022 Fedora Release Engineering <releng@fedoraproject.org> - 1.3.2-13
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_36_Mass_Rebuild
+
+* Sat Nov 06 2021 Adrian Reber <adrian@lisas.de> - 1.3.2-12
+- Rebuilt for protobuf 3.19.0
+
+* Tue Oct 26 2021 Adrian Reber <adrian@lisas.de> - 1.3.2-11
+- Rebuilt for protobuf 3.18.1
+
+* Tue Sep 14 2021 Sahana Prasad <sahana@redhat.com> - 1.3.2-10
+- Rebuilt with OpenSSL 3.0.0
+
+* Thu Jul 22 2021 Fedora Release Engineering <releng@fedoraproject.org> - 1.3.2-9
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_35_Mass_Rebuild
+
+* Tue Jan 26 2021 Fedora Release Engineering <releng@fedoraproject.org> - 1.3.2-8
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_34_Mass_Rebuild
+
+* Thu Jan 14 08:32:44 CET 2021 Adrian Reber <adrian@lisas.de> - 1.3.2-7
+- Rebuilt for protobuf 3.14
+
+* Thu Sep 24 2020 Adrian Reber <adrian@lisas.de> - 1.3.2-6
+- Rebuilt for protobuf 3.13
+
+* Tue Jul 28 2020 Fedora Release Engineering <releng@fedoraproject.org> - 1.3.2-5
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_33_Mass_Rebuild
+
+* Sun Jun 14 2020 Adrian Reber <adrian@lisas.de> - 1.3.2-4
+- Rebuilt for protobuf 3.12
+
 
 * Wed Jan 29 2020 Fedora Release Engineering <releng@fedoraproject.org> - 1.3.2-3
 - Rebuilt for https://fedoraproject.org/wiki/Fedora_32_Mass_Rebuild
