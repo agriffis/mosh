@@ -17,7 +17,8 @@ function git_version {
     read _ master_tag master_commits master_hash <<<"${master_describe//-/ }"
     [[ $master_tag == 1.* && $master_commits -gt 0 && -n $master_hash ]] || die "failed git describe"
 
-    output "$master_tag~git.$master_commits.$master_hash"
+    # https://docs.fedoraproject.org/en-US/packaging-guidelines/Versioning/#_snapshots
+    output "$master_tag^git.$master_commits.$master_hash"
 }
 
 function git_revision {
