@@ -15,6 +15,7 @@ function git_version {
     declare _ master_describe master_tag master_commits master_hash
     master_describe=$(git describe --first-parent origin/master)
     read _ master_tag master_commits master_hash <<<"${master_describe//-/ }"
+    master_hash=${master_hash#g} # git prepends g to indicate git
     [[ $master_tag == 1.* && $master_commits -gt 0 && -n $master_hash ]] || die "failed git describe"
 
     # https://docs.fedoraproject.org/en-US/packaging-guidelines/Versioning/#_snapshots
