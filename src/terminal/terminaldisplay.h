@@ -44,6 +44,7 @@ public:
 
   int cursor_x, cursor_y;
   Renditions current_rendition;
+  Hyperlink current_hyperlink;
   bool cursor_visible;
 
   const Framebuffer& last_frame;
@@ -60,6 +61,7 @@ public:
   void append_silent_move( int y, int x );
   void append_move( int y, int x );
   void update_rendition( const Renditions& r, bool force = false );
+  void update_hyperlink( const Hyperlink& h, bool force = false );
 };
 
 class Display
@@ -80,6 +82,8 @@ private:
                 int frame_y,
                 const Row& old_row,
                 bool wrap ) const;
+
+  bool can_use_erase( const FrameState& frame ) const;
 
 public:
   std::string open() const;
